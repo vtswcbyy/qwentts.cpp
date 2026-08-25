@@ -38,14 +38,15 @@ jobs:
         shell: powershell
         run: |
           $ver = "1.4.350.0"
+          $installer = "$env:TEMP\vulkansdk.exe"
           $url = "https://sdk.lunarg.com/sdk/download/$ver/windows/vulkansdk-windows-X64-$ver.exe"
           Write-Host "Downloading Vulkan SDK $ver via curl.exe (High Speed)..."
-          curl.exe -sSL -f -o "vulkansdk.exe" $url
+          curl.exe -sSL -f -o $installer $url
           
           Write-Host "Extracting Vulkan SDK via 7z (Takes ~5 seconds)..."
-          New-Item -ItemType Directory -Force -Path "C:\VulkanSDK"
-          & "7z" x $installer -o"C:\VulkanSDK" -y -bso0 -bsp0
-          Remove-Item -Force $installer
+          New-Item -ItemType Directory -Force -Path "C:\VulkanSDK" | Out-Null
+          7z x $installer -oC:\VulkanSDK -y -bso0 -bsp0
+          if (Test-Path $installer) { Remove-Item -Force $installer }
           
           # 自动定位包含 glslc.exe 的根目录
           $sdkRoot = "C:\VulkanSDK"
