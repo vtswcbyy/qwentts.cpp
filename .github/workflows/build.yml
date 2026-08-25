@@ -63,6 +63,7 @@ jobs:
             -DQWEN_SHARED=ON ^
             -DBUILD_SHARED_LIBS=ON ^
             -DGGML_BACKEND_DL=ON ^
+            -DGGML_NATIVE=OFF ^
             -DGGML_CPU_ALL_VARIANTS=OFF ^
             -DGGML_VULKAN=ON
           cmake --build build-vulkan --config Release -j 4
@@ -75,6 +76,7 @@ jobs:
             -DQWEN_SHARED=ON ^
             -DBUILD_SHARED_LIBS=ON ^
             -DGGML_BACKEND_DL=ON ^
+            -DGGML_NATIVE=OFF ^
             -DGGML_CPU_ALL_VARIANTS=OFF ^
             -DGGML_CUDA=ON ^
             -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89"
