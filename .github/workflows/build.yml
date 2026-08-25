@@ -1,0 +1,130 @@
+name: Build QwenTTS Prebuilt
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_id:
+        description: 'Git Commit ID 或分支/Tag (默认锁定本地稳定 Commit)'
+        required: false
+        default: '35ebe5376b82a0a59d008586d55bbe623d449011'
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    name: Windows x86_64 (Vulkan + CUDA)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.commit_id || '35ebe5376b82a0a59d008586d55bbe623d449011' }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Ninja
+        shell: powershell
+        run: |
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            choco install ninja -y
+          }
+          ninja --version
+
+      - name: Setup Vulkan SDK
+        shell: powershell
+        run: |
+          $ver = "1.4.350.0"
+          $installer = "vulkansdk.exe"
+          $url = "https://sdk.lunarg.com/sdk/download/$ver/windows/vulkansdk-windows-X64-$ver.exe"
+          Write-Host "Downloading Vulkan SDK $ver ..."
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          Write-Host "Installing Vulkan SDK ..."
+          Start-Process -FilePath ".\$installer" -ArgumentList "--root C:\VulkanSDK\$ver --accept-licenses --default-answer --confirm-command install" -Wait
+          Remove-Item -Force $installer
+          echo "VULKAN_SDK=C:\VulkanSDK\$ver" >> $env:GITHUB_ENV
+          echo "C:\VulkanSDK\$ver\Bin" >> $env:GITHUB_PATH
+
+      - name: Setup CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.8.0'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+
+      - name: Setup MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build Vulkan & CPU Binaries
+        shell: cmd
+        run: |
+          cmake -B build-vulkan -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DQWEN_SHARED=ON ^
+            -DBUILD_SHARED_LIBS=ON ^
+            -DGGML_BACKEND_DL=ON ^
+            -DGGML_CPU_ALL_VARIANTS=OFF ^
+            -DGGML_VULKAN=ON
+          cmake --build build-vulkan --config Release -j 4
+
+      - name: Build CUDA Binaries
+        shell: cmd
+        run: |
+          cmake -B build-cuda -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DQWEN_SHARED=ON ^
+            -DBUILD_SHARED_LIBS=ON ^
+            -DGGML_BACKEND_DL=ON ^
+            -DGGML_CPU_ALL_VARIANTS=OFF ^
+            -DGGML_CUDA=ON ^
+            -DCMAKE_CUDA_ARCHITECTURES="75;80;86;89"
+          cmake --build build-cuda --config Release -j 4
+
+      - name: Organize Output Artifacts (Windows)
+        shell: bash
+        run: |
+          mkdir -p dist/qwentts/engines dist/qwentts/ggml
+
+          # 收集 Vulkan/CPU 主引擎与 ggml
+          find build-vulkan/ -type f \( -name "*.dll" -o -name "*.lib" \) | while read file; do
+            filename=$(basename "$file")
+            if [[ "$filename" == *"ggml"* ]]; then
+              cp -f "$file" dist/qwentts/ggml/
+            elif [[ "$filename" == *"qwen"* ]]; then
+              cp -f "$file" dist/qwentts/engines/
+            fi
+          done
+
+          # 收集 CUDA 插件 (ggml-cuda)
+          find build-cuda/ -type f \( -name "*cuda*.dll" -o -name "*cuda*.lib" \) | while read file; do
+            cp -f "$file" dist/qwentts/ggml/
+          done
+
+          # 打包
+          cd dist
+          tar -czf ../qwentts-windows-x86_64.tar.gz qwentts
+          cd ..
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwentts-windows-x86_64
+          path: qwentts-windows-x86_64.tar.gz
+
+  release:
+    name: Create GitHub Release
+    needs: [build-windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
