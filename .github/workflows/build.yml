@@ -14,7 +14,7 @@ on:
 jobs:
   build-windows:
     name: Windows x86_64 (Vulkan + CUDA)
-    runs-on: windows-latest
+    runs-on: windows-2022
     env:
       CUDAFLAGS: "--allow-unsupported-compiler"
       NVCC_APPEND_FLAGS: "--allow-unsupported-compiler"
@@ -34,7 +34,7 @@ jobs:
           }
           ninja --version
 
-      - name: Setup Vulkan SDK (7z Fast Extract)
+      - name: Setup Vulkan SDK
         shell: powershell
         run: |
           $ver = "1.4.350.0"
@@ -43,45 +43,16 @@ jobs:
           Write-Host "Downloading Vulkan SDK $ver via curl.exe (High Speed)..."
           curl.exe -sSL -f -o $installer $url
           
-          Write-Host "Extracting Vulkan SDK via 7z (Takes ~5 seconds)..."
-          New-Item -ItemType Directory -Force -Path "C:\VulkanSDK" | Out-Null
-          7z x $installer -oC:\VulkanSDK -y -bso0 -bsp0
+          Write-Host "Installing Vulkan SDK quietly via official installer..."
+          Start-Process -FilePath $installer -ArgumentList "--root C:\VulkanSDK --accept-licenses --default-answer --confirm-command install" -Wait
           if (Test-Path $installer) { Remove-Item -Force $installer }
           
-          # 精准定位 Include、Lib、Bin
-          $vulkanHeader = Get-ChildItem -Path "C:\VulkanSDK" -Recurse -Filter "vulkan.h" -ErrorAction SilentlyContinue | Select-Object -First 1
-          $vulkanLib = Get-ChildItem -Path "C:\VulkanSDK" -Recurse -Filter "vulkan-1.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
-          $glslcBin = Get-ChildItem -Path "C:\VulkanSDK" -Recurse -Filter "glslc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          Write-Host "================ [ VULKAN SDK READY ] ================"
+          Get-ChildItem "C:\VulkanSDK" | Format-Table
           
-          if ($vulkanHeader) {
-            $incDir = $vulkanHeader.Directory.Parent.FullName
-            $sdkRoot = (Get-Item $incDir).Parent.FullName
-            echo "Vulkan_INCLUDE_DIR=$incDir" >> $env:GITHUB_ENV
-            echo "Vulkan_INCLUDE_DIRS=$incDir" >> $env:GITHUB_ENV
-          } else {
-            $sdkRoot = "C:\VulkanSDK"
-          }
-          
-          if ($vulkanLib) {
-            $libPath = $vulkanLib.FullName
-            echo "Vulkan_LIBRARY=$libPath" >> $env:GITHUB_ENV
-            echo "Vulkan_LIBRARIES=$libPath" >> $env:GITHUB_ENV
-          }
-          
-          if ($glslcBin) {
-            $glslcPath = $glslcBin.FullName
-            $binDir = $glslcBin.Directory.FullName
-            echo "Vulkan_GLSLC_EXECUTABLE=$glslcPath" >> $env:GITHUB_ENV
-            echo "$binDir" >> $env:GITHUB_PATH
-          }
-          
-          Write-Host "Vulkan SDK Root: $sdkRoot"
-          Write-Host "Vulkan Header: $($vulkanHeader.FullName)"
-          Write-Host "Vulkan Lib: $($vulkanLib.FullName)"
-          Write-Host "Vulkan Glslc: $($glslcBin.FullName)"
-          
-          echo "VULKAN_SDK=$sdkRoot" >> $env:GITHUB_ENV
-          echo "CMAKE_PREFIX_PATH=$sdkRoot" >> $env:GITHUB_ENV
+          echo "VULKAN_SDK=C:\VulkanSDK" >> $env:GITHUB_ENV
+          echo "CMAKE_PREFIX_PATH=C:\VulkanSDK;C:\VulkanSDK\share\cmake" >> $env:GITHUB_ENV
+          echo "C:\VulkanSDK\Bin" >> $env:GITHUB_PATH
 
       - name: Setup CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.21
@@ -119,17 +90,16 @@ jobs:
         run: |
           cmake -B build-vulkan -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_CXX_FLAGS="/bigobj /EHsc" ^
+            -DCMAKE_C_FLAGS="/bigobj /EHsc" ^
             -DQWEN_SHARED=ON ^
             -DBUILD_SHARED_LIBS=ON ^
             -DGGML_BACKEND_DL=ON ^
             -DGGML_NATIVE=OFF ^
             -DGGML_CPU_ALL_VARIANTS=OFF ^
             -DGGML_VULKAN=ON ^
-            -DVULKAN_SDK="%VULKAN_SDK%" ^
-            -DCMAKE_PREFIX_PATH="%CMAKE_PREFIX_PATH%" ^
-            -DVulkan_INCLUDE_DIR="%Vulkan_INCLUDE_DIR%" ^
-            -DVulkan_LIBRARY="%Vulkan_LIBRARY%" ^
-            -DVulkan_GLSLC_EXECUTABLE="%Vulkan_GLSLC_EXECUTABLE%"
+            -DVULKAN_SDK=C:\VulkanSDK ^
+            -DCMAKE_PREFIX_PATH="C:\VulkanSDK;C:\VulkanSDK\share\cmake"
           cmake --build build-vulkan --config Release -j 4
 
       - name: Build CUDA Binaries
@@ -137,6 +107,8 @@ jobs:
         run: |
           cmake -B build-cuda -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_CXX_FLAGS="/bigobj /EHsc" ^
+            -DCMAKE_C_FLAGS="/bigobj /EHsc" ^
             -DQWEN_SHARED=ON ^
             -DBUILD_SHARED_LIBS=ON ^
             -DGGML_BACKEND_DL=ON ^
